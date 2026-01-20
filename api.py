@@ -148,9 +148,74 @@ def remove_html_whitespace(html):
     return soup.decode(formatter="minimal")
 
 
+# REMOVE_TAGS = [
+#     # Scripting containers EXCEPT structured data
+#     "noscript", "template",
+
+#     # Styling / presentation
+#     "style", "link",
+
+#     # SVG / graphics internals
+#     "svg", "path", "defs", "symbol", "use",
+
+#     # Metadata / document structure
+#     "head", "meta", "base", "title",
+
+#     # Layout / chrome
+#     "header", "footer", "nav", "aside",
+
+#     # Forms / inputs
+#     "form", "input", "textarea", "select",
+#     "option", "button", "label", "fieldset", "legend",
+
+#     # Media containers
+#     "canvas", "video", "audio", "source", "track",
+
+#     # Embeds / external content
+#     "iframe", "embed", "object", "param",
+
+#     # Table layout junk
+#     "colgroup", "col", "tbody", "thead", "tfoot",
+
+#     # Interactive widgets
+#     "details", "summary", "dialog",
+
+#     # Rare but noisy
+#     "map", "area"
+# ]
+
+# def extract_tagged_text(html):
+#     soup = BeautifulSoup(html, "html.parser")
+#     body = soup.body
+
+#     if not body:
+#         return ""
+
+#     # 1️⃣ Remove non-structured scripts ONLY
+#     for script in body.find_all("script"):
+#         script_type = (script.get("type") or "").lower()
+
+#         if script_type not in (
+#             "application/ld+json",
+#             "application/json",
+#         ):
+#             script.decompose()
+
+#     # 2️⃣ Remove all other unwanted tags
+#     for bad in body.find_all(REMOVE_TAGS):
+#         bad.decompose()
+
+#     # 3️⃣ Optional: strip attributes
+#     cleaned_html = strip_class_and_id(body)
+
+#     # 4️⃣ Normalize whitespace
+#     html_no_whitespace = remove_html_whitespace(cleaned_html)
+
+#     return html_no_whitespace
+
 REMOVE_TAGS = [
-    # Scripting / execution
-    "script", "noscript", "template",
+    # Scripting containers EXCEPT structured data
+    "noscript", "template",
 
     # Styling / presentation
     "style", "link",
@@ -161,45 +226,56 @@ REMOVE_TAGS = [
     # Metadata / document structure
     "head", "meta", "base", "title",
 
-    # Layout / chrome (usually non-content)
+    # Layout / chrome
     "header", "footer", "nav", "aside",
 
-    # Forms / inputs (rarely useful for content analysis)
+    # Forms / inputs
     "form", "input", "textarea", "select",
     "option", "button", "label", "fieldset", "legend",
 
-    # Media containers you usually don’t want as text
+    # Media containers
     "canvas", "video", "audio", "source", "track",
 
     # Embeds / external content
     "iframe", "embed", "object", "param",
 
-    # Tables used for layout (often noise)
+    # Table layout junk
     "colgroup", "col", "tbody", "thead", "tfoot",
 
-    # Interactive / disclosure widgets
+    # Interactive widgets
     "details", "summary", "dialog",
-
-    # Accessibility / annotations (usually redundant)
-    "aria-hidden",
 
     # Rare but noisy
     "map", "area"
 ]
- 
-def extract_tagged_text(html):
 
+def extract_tagged_text(html):
     soup = BeautifulSoup(html, "html.parser")
-    soup = soup.body
-    # Remove unwanted elements entirely
-    for bad in soup.find_all(REMOVE_TAGS):
+    body = soup.body
+
+    if not body:
+        return ""
+
+    # 1️⃣ Remove non-structured scripts ONLY
+    for script in body.find_all("script"):
+        script_type = (script.get("type") or "").lower()
+
+        if script_type not in (
+            "application/ld+json",
+            "application/json",
+        ):
+            script.decompose()
+
+    # 2️⃣ Remove all other unwanted tags
+    for bad in body.find_all(REMOVE_TAGS):
         bad.decompose()
-    cleaned_html = strip_class_and_id(soup)
+
+    # 3️⃣ Optional: strip attributes
+    cleaned_html = strip_class_and_id(body)
+
+    # 4️⃣ Normalize whitespace
     html_no_whitespace = remove_html_whitespace(cleaned_html)
     return html_no_whitespace
-
-
-
 
 
 
@@ -209,11 +285,6 @@ MOBILE_VIEWPORT = {"width": 390, "height": 844}
 
 ROOT_DIR = Path(__file__).resolve().parent
 
-NON_SEO_TAGS = [
-    "script", "style", "nav", "footer", "header", "aside",
-    "noscript", "svg", "iframe", "form", "button", "input",
-    "textarea", "select", "option", "canvas", "meta", "link"
-]
 
 search_tool = genai.types.Tool(
     google_search=genai.types.GoogleSearch()
@@ -285,43 +356,81 @@ def capture_screenshots_and_html(url: str, banner_1, banner_2):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
 
-        desktop_context = browser.new_context(viewport=DESKTOP_VIEWPORT)
-        desktop_page = desktop_context.new_page()
-        prepare_page(desktop_page, url, banner_1, banner_2)
+        context = browser.new_context(
+            viewport=DESKTOP_VIEWPORT,
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            )
+        )
 
-        screenshots.append(desktop_page.screenshot(full_page=True))
+        page = context.new_page()
+        prepare_page(page, url, banner_1, banner_2)
 
-        # Refine HTML so audit is accurate at a semantic level
-        raw_html = desktop_page.content()
+        # ----------------------------
+        # JS SITE DETECTION
+        # ----------------------------
+        html_initial = page.content()
+        initial_length = len(html_initial)
 
+        # Wait briefly to allow JS hydration
+        page.wait_for_timeout(1500)
+
+        html_after_wait = page.content()
+        after_wait_length = len(html_after_wait)
+
+        is_js_site = after_wait_length > initial_length * 1.1
+
+        # ----------------------------
+        # IF JS SITE → RENDER FULL DOM
+        # ----------------------------
+        if is_js_site:
+            # Attempt scroll to trigger lazy loading / hydration
+            page.mouse.wheel(0, 5000)
+            page.wait_for_timeout(2000)
+
+        # Capture final HTML
+        raw_html = page.content()
+
+        # Screenshot desktop
+        screenshots.append(page.screenshot(full_page=True))
+
+        # ----------------------------
+        # MOBILE PASS (NO RE-DETECTION)
+        # ----------------------------
         mobile_context = browser.new_context(
             viewport=MOBILE_VIEWPORT,
             is_mobile=True,
             has_touch=True,
-            device_scale_factor=3
+            device_scale_factor=3,
+            user_agent=(
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+                "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+                "Version/17.0 Mobile/15E148 Safari/604.1"
+            )
         )
+
         mobile_page = mobile_context.new_page()
         prepare_page(mobile_page, url, banner_1, banner_2)
+
+        if is_js_site:
+            mobile_page.wait_for_timeout(1500)
+            mobile_page.mouse.wheel(0, 4000)
+            mobile_page.wait_for_timeout(1500)
 
         screenshots.append(mobile_page.screenshot(full_page=True))
 
         browser.close()
 
-    # -------- HTML CLEANING --------
     cleaned_html = extract_tagged_text(raw_html)
-    print(len(cleaned_html))
-    exit()
-    # soup = BeautifulSoup(raw_html, "html.parser")
-    # body = soup.body
+    print(cleaned_html)
 
-    # if not body:
-    #     raise ValueError("No <body> tag found")
-
-    # for tag_name in NON_SEO_TAGS:
-    #     for tag in body.find_all(tag_name):
-    #         tag.decompose()
 
     return screenshots, cleaned_html
+
+
+    
 
 
 # ----------------------------
@@ -338,7 +447,19 @@ async def ask_gemini(body: AskRequest):
         )
         image_parts = []
 
-        for img_bytes in screenshots:
+        # Save in project root (or change this path if you want)
+        output_dir = Path(".").resolve()
+
+        filenames = [
+            output_dir / "screenshot_desktop.png",
+            output_dir / "screenshot_mobile.png",
+        ]
+
+        for img_bytes, path in zip(screenshots, filenames):
+            # ✅ Save image to disk
+            path.write_bytes(img_bytes)
+
+            # ✅ Pass image to Gemini
             image_parts.append(
                 genai.types.Part.from_bytes(
                     data=img_bytes,
@@ -361,8 +482,7 @@ async def ask_gemini(body: AskRequest):
 
 
         return {
-            "response": response.text,
-            "saved_files": [p.name for p in filenames],
+            "response": response.text
         }
 
     except Exception as e:
