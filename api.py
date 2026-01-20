@@ -182,6 +182,37 @@ REMOVE_TAGS_AGGRESSIVE = [
     "map", "area",
 ]
 
+REMOVE_TAGS_SEO_ONLY = [
+    # Rendering / JS / UI
+    "noscript", "template", "style", 
+
+    # SVG / visual noise
+    "svg", "path", "defs", "symbol", "use",
+
+    # Layout / chrome
+    "header", "footer", "nav", "aside",
+
+    # Forms / interactions
+    "form", "input", "textarea", "select",
+    "option", "button", "label", "fieldset", "legend",
+
+    # Media (not used by search or LLMs)
+    "canvas", "video", "audio", "source", "track",
+
+    # Embeds / third-party
+    "iframe", "embed", "object", "param",
+
+    # Table internals (semantic tables still survive via <table>, <tr>, <td>)
+    "colgroup", "col", "tbody", "thead", "tfoot",
+
+    # Disclosure widgets
+    "details", "summary", "dialog",
+
+    # Image maps
+    "map", "area",
+]
+
+
 
 def extract_tagged_text(html: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
@@ -191,8 +222,25 @@ def extract_tagged_text(html: str) -> str:
     if not head:
         return ""
 
-    print(head)
-    exit()
+    # 1️⃣ Remove non-SEO scripts (keep structured data only)
+    for script in head.find_all("script"):
+        script_type = (script.get("type") or "").lower()
+
+        if script_type not in (
+            "application/ld+json",
+            "application/json",
+        ):
+            script.decompose()
+
+    # 2️⃣ Remove non-SEO tags from <head>
+    for bad in head.find_all(REMOVE_TAGS_SEO_ONLY):
+        bad.decompose()
+    
+    # Remove all stylesheet links (fonts, CSS, Elementor, etc.)
+    for link in soup.find_all("link", rel="stylesheet"):
+        link.decompose()
+
+    head_html_with_structure_data = strip_class_and_id(head)
 
     body = soup.body
 
@@ -210,8 +258,9 @@ def extract_tagged_text(html: str) -> str:
     for bad in body.find_all(REMOVE_TAGS_LIGHT):
         bad.decompose()
 
-    html_with_structure_data = strip_class_and_id(body)
-    html_no_whitespace = remove_html_whitespace(html_with_structure_data)
+    body_html_with_structure_data = strip_class_and_id(body)
+    html_no_whitespace = remove_html_whitespace(head_html_with_structure_data) + remove_html_whitespace(body_html_with_structure_data)
+   
 
     # # ----------------------------
     # # SIZE CHECK
@@ -482,38 +531,38 @@ async def ask_gemini(body: AskRequest):
             # Gemini call can safely run concurrently
             # Split up mobile and desktop analysis
             # Model should be able to identify page intent from HTML alone..
-            desktop_response = await client.aio.models.generate_content(
-                model="gemini-3-flash-preview",
-                contents=[
-                    "Analyze the following ecommerce product page HTML and screenshots. "
-                    "Describe how the product page could be improved for UX, SEO, and conversion on DESKTOP DISPLAY ONLY.",
-                    f"HTML CONTENT:\n{cleaned_html}",
-                    *image_parts
-                ],
-                config=genai.types.GenerateContentConfig(
-                    tools=[search_tool]
-                )
-            )
+            # desktop_response = await client.aio.models.generate_content(
+            #     model="gemini-3-flash-preview",
+            #     contents=[
+            #         "Analyze the following HTML and screenshots. "
+            #         "Describe how the page could be improved for UX, SEO, and conversion on DESKTOP DISPLAY ONLY.",
+            #         f"HTML CONTENT:\n{cleaned_html}",
+            #         *image_parts
+            #     ],
+            #     config=genai.types.GenerateContentConfig(
+            #         tools=[search_tool]
+            #     )
+            # )
 
-            # Gemini call can safely run concurrently
-            mobile_response = await client.aio.models.generate_content(
-                model="gemini-3-flash-preview",
-                contents=[
-                    "Analyze the following ecommerce product page HTML and screenshots. "
-                    "Describe how the product page could be improved for UX, SEO, and conversion on MOBILE DISPLAY ONLY.",
-                    f"HTML CONTENT:\n{cleaned_html}",
-                    *image_parts
-                ],
-                config=genai.types.GenerateContentConfig(
-                    tools=[search_tool]
-                )
-            )
+            # # Gemini call can safely run concurrently
+            # mobile_response = await client.aio.models.generate_content(
+            #     model="gemini-3-flash-preview",
+            #     contents=[
+            #         "Analyze the following page HTML and screenshots. "
+            #         "Describe how the page could be improved for UX, SEO, and conversion on MOBILE DISPLAY ONLY.",
+            #         f"HTML CONTENT:\n{cleaned_html}",
+            #         *image_parts
+            #     ],
+            #     config=genai.types.GenerateContentConfig(
+            #         tools=[search_tool]
+            #     )
+            # )
 
             # Gemini call can safely run concurrently
             aeo_response = await client.aio.models.generate_content(
                 model="gemini-3-flash-preview",
                 contents=[
-                    "Analyze the following ecommerce product page HTML and screenshots. "
+                    "Analyze the following page HTML. "
                     "Describe how the product page data could be improved for answer engine optimisation.",
                     f"HTML CONTENT:\n{cleaned_html}",
                     *image_parts
@@ -523,10 +572,13 @@ async def ask_gemini(body: AskRequest):
                 )
             )
 
+            print(aeo_response)
+            exit()
+
             geo_response = await client.aio.models.generate_content(
                 model="gemini-3-flash-preview",
                 contents=[
-                    "Analyze the following ecommerce product page HTML and screenshots. "
+                    "Analyze the following page HTML. "
                     "Describe how the product page data could be improved for generative engine optimisation.",
                     f"HTML CONTENT:\n{cleaned_html}",
                     *image_parts
@@ -538,7 +590,9 @@ async def ask_gemini(body: AskRequest):
 
             return {
                 "desktop_response": desktop_response.text,
-                "mobile_response": mobile_response.text
+                "mobile_response": mobile_response.text,
+                "aeo_response": aeo_response.text,
+                "geo_response": geo_response.text
             }
 
         except Exception as e:
