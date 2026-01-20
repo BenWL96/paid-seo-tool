@@ -9,17 +9,16 @@ app = FastAPI()
 
 # Initialize the client. The SDK handles async pooling efficiently.
 client = genai.Client(
-    vertexai=False,
-    api_key=os.environ.get("GOOGLE_API_KEY")
+    api_key=os.environ.get("GOOGLE_API_KEY"),
+    vertexai=False
 )
-
 
 @app.get("/ask")
 async def ask_gemini():
     try:
         # Use the standard generate_content call within an async function
         # The SDK is built to be non-blocking in async contexts
-        response = await client.models.generate_content(
+        response = await client.aio.models.generate_content(
             model="gemini-2.0-flash",
             contents="explain quantum physics in 20 words"
         )
