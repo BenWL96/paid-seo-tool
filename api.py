@@ -121,6 +121,8 @@ def capture_screenshots_and_html(url: str, banner_1, banner_2):
         prepare_page(desktop_page, url, banner_1, banner_2)
 
         screenshots.append(desktop_page.screenshot(full_page=True))
+
+        # Refine HTML so audit is accurate at a semantic level
         raw_html = desktop_page.content()
 
         mobile_context = browser.new_context(
@@ -164,27 +166,18 @@ async def ask_gemini(body: AskRequest):
             body.banner_1,
             body.banner_2,
         )
-        filenames = [
-            ROOT_DIR / "screenshot_desktop.png",
-            ROOT_DIR / "screenshot_mobile.png",
-        ]
-
         image_parts = []
 
-        for img_bytes, path in zip(screenshots, filenames):
-            path.write_bytes(img_bytes)
+        for img_bytes in screenshots:
             image_parts.append(
                 genai.types.Part.from_bytes(
                     data=img_bytes,
                     mime_type="image/png"
                 )
-            )  
-
-        print(cleaned_html)
-        exit()
+            )
 
         response = await client.aio.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-3-flash-preview",
             contents=[
                 "Analyze the following ecommerce product page HTML and screenshots. "
                 "Describe how the product page could be improved for UX, SEO, and conversion.",
@@ -195,6 +188,7 @@ async def ask_gemini(body: AskRequest):
                 tools=[search_tool]
             )
         )
+
 
         return {
             "response": response.text,
