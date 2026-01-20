@@ -185,6 +185,15 @@ REMOVE_TAGS_AGGRESSIVE = [
 
 def extract_tagged_text(html: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
+
+    head = soup.head
+
+    if not head:
+        return ""
+
+    print(head)
+    exit()
+
     body = soup.body
 
     if not body:
@@ -201,30 +210,30 @@ def extract_tagged_text(html: str) -> str:
     for bad in body.find_all(REMOVE_TAGS_LIGHT):
         bad.decompose()
 
-    cleaned_html = strip_class_and_id(body)
-    html_no_whitespace = remove_html_whitespace(cleaned_html)
+    html_with_structure_data = strip_class_and_id(body)
+    html_no_whitespace = remove_html_whitespace(html_with_structure_data)
 
-    # ----------------------------
-    # SIZE CHECK
-    # ----------------------------
-    if len(html_no_whitespace) <= MAX_HTML_CHARS:
-        return html_no_whitespace
+    # # ----------------------------
+    # # SIZE CHECK
+    # # ----------------------------
+    # if len(html_no_whitespace) <= MAX_HTML_CHARS:
+    #     return html_no_whitespace
 
-    # ----------------------------
-    # PASS 2: Aggressive fallback
-    # ----------------------------
-    soup = BeautifulSoup(html, "html.parser")
-    body = soup.body
+    # # ----------------------------
+    # # PASS 2: Aggressive fallback
+    # # ----------------------------
+    # soup = BeautifulSoup(html, "html.parser")
+    # body = soup.body
 
-    if not body:
-        return ""
+    # if not body:
+    #     return ""
 
-    for bad in body.find_all(REMOVE_TAGS_AGGRESSIVE):
-        bad.decompose()
+    # for bad in body.find_all(REMOVE_TAGS_AGGRESSIVE):
+    #     bad.decompose()
 
-    cleaned_html = strip_class_and_id(body) 
+    # cleaned_html = strip_class_and_id(body) 
 
-    html_no_whitespace = remove_html_whitespace(cleaned_html)
+    # html_no_whitespace = remove_html_whitespace(cleaned_html)
 
 
     return html_no_whitespace
@@ -429,7 +438,7 @@ playwright_semaphore = asyncio.Semaphore(MAX_PLAYWRIGHT_SESSIONS)
 # ----------------------------
 # FASTAPI ENDPOINT
 # ----------------------------
-@app.post("/ask")
+@app.post("/premium/audit")
 async def ask_gemini(body: AskRequest):
     async with request_semaphore:
         try:
@@ -471,11 +480,54 @@ async def ask_gemini(body: AskRequest):
             #     )
 
             # Gemini call can safely run concurrently
-            response = await client.aio.models.generate_content(
+            # Split up mobile and desktop analysis
+            # Model should be able to identify page intent from HTML alone..
+            desktop_response = await client.aio.models.generate_content(
                 model="gemini-3-flash-preview",
                 contents=[
                     "Analyze the following ecommerce product page HTML and screenshots. "
-                    "Describe how the product page could be improved for UX, SEO, and conversion.",
+                    "Describe how the product page could be improved for UX, SEO, and conversion on DESKTOP DISPLAY ONLY.",
+                    f"HTML CONTENT:\n{cleaned_html}",
+                    *image_parts
+                ],
+                config=genai.types.GenerateContentConfig(
+                    tools=[search_tool]
+                )
+            )
+
+            # Gemini call can safely run concurrently
+            mobile_response = await client.aio.models.generate_content(
+                model="gemini-3-flash-preview",
+                contents=[
+                    "Analyze the following ecommerce product page HTML and screenshots. "
+                    "Describe how the product page could be improved for UX, SEO, and conversion on MOBILE DISPLAY ONLY.",
+                    f"HTML CONTENT:\n{cleaned_html}",
+                    *image_parts
+                ],
+                config=genai.types.GenerateContentConfig(
+                    tools=[search_tool]
+                )
+            )
+
+            # Gemini call can safely run concurrently
+            aeo_response = await client.aio.models.generate_content(
+                model="gemini-3-flash-preview",
+                contents=[
+                    "Analyze the following ecommerce product page HTML and screenshots. "
+                    "Describe how the product page data could be improved for answer engine optimisation.",
+                    f"HTML CONTENT:\n{cleaned_html}",
+                    *image_parts
+                ],
+                config=genai.types.GenerateContentConfig(
+                    tools=[search_tool]
+                )
+            )
+
+            geo_response = await client.aio.models.generate_content(
+                model="gemini-3-flash-preview",
+                contents=[
+                    "Analyze the following ecommerce product page HTML and screenshots. "
+                    "Describe how the product page data could be improved for generative engine optimisation.",
                     f"HTML CONTENT:\n{cleaned_html}",
                     *image_parts
                 ],
@@ -485,12 +537,12 @@ async def ask_gemini(body: AskRequest):
             )
 
             return {
-                "response": response.text
+                "desktop_response": desktop_response.text,
+                "mobile_response": mobile_response.text
             }
 
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-
 
 # ----------------------------
 # LOCAL RUN
