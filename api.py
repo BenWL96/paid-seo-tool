@@ -148,134 +148,87 @@ def remove_html_whitespace(html):
     return soup.decode(formatter="minimal")
 
 
-# REMOVE_TAGS = [
-#     # Scripting containers EXCEPT structured data
-#     "noscript", "template",
+MAX_HTML_CHARS = 50_000
 
-#     # Styling / presentation
-#     "style", "link",
-
-#     # SVG / graphics internals
-#     "svg", "path", "defs", "symbol", "use",
-
-#     # Metadata / document structure
-#     "head", "meta", "base", "title",
-
-#     # Layout / chrome
-#     "header", "footer", "nav", "aside",
-
-#     # Forms / inputs
-#     "form", "input", "textarea", "select",
-#     "option", "button", "label", "fieldset", "legend",
-
-#     # Media containers
-#     "canvas", "video", "audio", "source", "track",
-
-#     # Embeds / external content
-#     "iframe", "embed", "object", "param",
-
-#     # Table layout junk
-#     "colgroup", "col", "tbody", "thead", "tfoot",
-
-#     # Interactive widgets
-#     "details", "summary", "dialog",
-
-#     # Rare but noisy
-#     "map", "area"
-# ]
-
-# def extract_tagged_text(html):
-#     soup = BeautifulSoup(html, "html.parser")
-#     body = soup.body
-
-#     if not body:
-#         return ""
-
-#     # 1️⃣ Remove non-structured scripts ONLY
-#     for script in body.find_all("script"):
-#         script_type = (script.get("type") or "").lower()
-
-#         if script_type not in (
-#             "application/ld+json",
-#             "application/json",
-#         ):
-#             script.decompose()
-
-#     # 2️⃣ Remove all other unwanted tags
-#     for bad in body.find_all(REMOVE_TAGS):
-#         bad.decompose()
-
-#     # 3️⃣ Optional: strip attributes
-#     cleaned_html = strip_class_and_id(body)
-
-#     # 4️⃣ Normalize whitespace
-#     html_no_whitespace = remove_html_whitespace(cleaned_html)
-
-#     return html_no_whitespace
-
-REMOVE_TAGS = [
-    # Scripting containers EXCEPT structured data
+# --- MODE 1: Keep structured data ---
+REMOVE_TAGS_LIGHT = [
     "noscript", "template",
-
-    # Styling / presentation
     "style", "link",
-
-    # SVG / graphics internals
     "svg", "path", "defs", "symbol", "use",
-
-    # Metadata / document structure
     "head", "meta", "base", "title",
-
-    # Layout / chrome
     "header", "footer", "nav", "aside",
-
-    # Forms / inputs
     "form", "input", "textarea", "select",
     "option", "button", "label", "fieldset", "legend",
-
-    # Media containers
     "canvas", "video", "audio", "source", "track",
-
-    # Embeds / external content
     "iframe", "embed", "object", "param",
-
-    # Table layout junk
     "colgroup", "col", "tbody", "thead", "tfoot",
-
-    # Interactive widgets
     "details", "summary", "dialog",
-
-    # Rare but noisy
-    "map", "area"
+    "map", "area",
 ]
 
-def extract_tagged_text(html):
+# --- MODE 2: Aggressive stripping (no schema) ---
+REMOVE_TAGS_AGGRESSIVE = [
+    "script", "noscript", "template",
+    "style", "link",
+    "svg", "path", "defs", "symbol", "use",
+    "head", "meta", "base", "title",
+    "header", "footer", "nav", "aside",
+    "form", "input", "textarea", "select",
+    "option", "button", "label", "fieldset", "legend",
+    "canvas", "video", "audio", "source", "track",
+    "iframe", "embed", "object", "param",
+    "colgroup", "col", "tbody", "thead", "tfoot",
+    "details", "summary", "dialog",
+    "map", "area",
+]
+
+
+def extract_tagged_text(html: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
     body = soup.body
 
     if not body:
         return ""
 
-    # 1️⃣ Remove non-structured scripts ONLY
+    # ----------------------------
+    # PASS 1: Preserve structured data
+    # ----------------------------
     for script in body.find_all("script"):
         script_type = (script.get("type") or "").lower()
-
-        if script_type not in (
-            "application/ld+json",
-            "application/json",
-        ):
+        if script_type not in ("application/ld+json", "application/json"):
             script.decompose()
 
-    # 2️⃣ Remove all other unwanted tags
-    for bad in body.find_all(REMOVE_TAGS):
+    for bad in body.find_all(REMOVE_TAGS_LIGHT):
         bad.decompose()
 
-    # 3️⃣ Optional: strip attributes
     cleaned_html = strip_class_and_id(body)
-
-    # 4️⃣ Normalize whitespace
     html_no_whitespace = remove_html_whitespace(cleaned_html)
+
+    # ----------------------------
+    # SIZE CHECK
+    # ----------------------------
+    if len(html_no_whitespace) <= MAX_HTML_CHARS:
+        return html_no_whitespace
+
+    # ----------------------------
+    # PASS 2: Aggressive fallback
+    # ----------------------------
+    soup = BeautifulSoup(html, "html.parser")
+    body = soup.body
+
+    if not body:
+        return ""
+
+    for bad in body.find_all(REMOVE_TAGS_AGGRESSIVE):
+        bad.decompose()
+
+    cleaned_html = strip_class_and_id(body) 
+
+    html_no_whitespace = remove_html_whitespace(cleaned_html)
+
+
     return html_no_whitespace
+
 
 
 
