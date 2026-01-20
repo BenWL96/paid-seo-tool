@@ -415,6 +415,15 @@ def capture_screenshots_and_html(url: str, banner_1, banner_2):
 
 
     
+# ----------------------------
+# CONCURRENCY LIMITS
+# ----------------------------
+
+MAX_CONCURRENT_REQUESTS = 4        # overall API load
+MAX_PLAYWRIGHT_SESSIONS = 1        # Chromium is expensive
+
+request_semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+playwright_semaphore = asyncio.Semaphore(MAX_PLAYWRIGHT_SESSIONS)
 
 
 # ----------------------------
@@ -422,57 +431,65 @@ def capture_screenshots_and_html(url: str, banner_1, banner_2):
 # ----------------------------
 @app.post("/ask")
 async def ask_gemini(body: AskRequest):
-    try:
-        screenshots, cleaned_html = await asyncio.to_thread(
-            capture_screenshots_and_html,
-            str(body.url),
-            body.banner_1,
-            body.banner_2,
-        )
-        image_parts = []
+    async with request_semaphore:
+        try:
+            # Limit Playwright usage separately
+            async with playwright_semaphore:
+                screenshots, cleaned_html = await asyncio.to_thread(
+                    capture_screenshots_and_html,
+                    str(body.url),
+                    body.banner_1,
+                    body.banner_2,
+                )
 
-        # Save in project root (or change this path if you want)
-        # output_dir = Path(".").resolve()
+            image_parts = []
+            for img_bytes in screenshots:
+                image_parts.append(
+                    genai.types.Part.from_bytes(
+                        data=img_bytes,
+                        mime_type="image/png"
+                    )
+                )
+            # Save in project root (or change this path if you want)
+            # output_dir = Path(".").resolve()
 
-        # filenames = [
-        #     output_dir / "screenshot_desktop.png",
-        #     output_dir / "screenshot_mobile.png",
-        # ]
+            # filenames = [
+            #     output_dir / "screenshot_desktop.png",
+            #     output_dir / "screenshot_mobile.png",
+            # ]
 
-        # for img_bytes, path in zip(screenshots, filenames):
-        #     # ✅ Save image to disk
-        #     path.write_bytes(img_bytes)
+            # for img_bytes, path in zip(screenshots, filenames):
+            #     # ✅ Save image to disk
+            #     path.write_bytes(img_bytes)
 
-        #     # ✅ Pass image to Gemini
-        #     image_parts.append(
-        #         genai.types.Part.from_bytes(
-        #             data=img_bytes,
-        #             mime_type="image/png"
-        #         )
-        #     )
+            #     # ✅ Pass image to Gemini
+            #     image_parts.append(
+            #         genai.types.Part.from_bytes(
+            #             data=img_bytes,
+            #             mime_type="image/png"
+            #         )
+            #     )
 
-        for img_bytes in screenshots: image_parts.append( genai.types.Part.from_bytes( data=img_bytes, mime_type="image/png" ) )
-
-        response = await client.aio.models.generate_content(
-            model="gemini-3-flash-preview",
-            contents=[
-                "Analyze the following ecommerce product page HTML and screenshots. "
-                "Describe how the product page could be improved for UX, SEO, and conversion.",
-                f"HTML CONTENT:\n{cleaned_html}",
-                *image_parts
-            ],
-            config=genai.types.GenerateContentConfig(
-                tools=[search_tool]
+            # Gemini call can safely run concurrently
+            response = await client.aio.models.generate_content(
+                model="gemini-3-flash-preview",
+                contents=[
+                    "Analyze the following ecommerce product page HTML and screenshots. "
+                    "Describe how the product page could be improved for UX, SEO, and conversion.",
+                    f"HTML CONTENT:\n{cleaned_html}",
+                    *image_parts
+                ],
+                config=genai.types.GenerateContentConfig(
+                    tools=[search_tool]
+                )
             )
-        )
 
+            return {
+                "response": response.text
+            }
 
-        return {
-            "response": response.text
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 # ----------------------------
