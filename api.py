@@ -8,12 +8,19 @@ from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright, Page
 from pydantic import BaseModel, HttpUrl
 from bs4 import BeautifulSoup
+from typing import Optional
 
 # ----------------------------
-# REQUEST MODEL
+# REQUEST MODELS
 # ----------------------------
+class BannerConfig(BaseModel):
+    type: str
+    text: str
+
 class AskRequest(BaseModel):
     url: HttpUrl
+    banner_1: Optional[BannerConfig] = None
+    banner_2: Optional[BannerConfig] = None
 
 
 # ----------------------------
@@ -44,18 +51,13 @@ search_tool = genai.types.Tool(
 )
 
 # ----------------------------
-# COOKIE CONSENT
+# BANNER HANDLING
 # ----------------------------
-def accept_cookies(page: Page, timeout: int = 5000) -> bool:
+def accept_banner(page: Page, banner: BannerConfig, timeout: int = 5000) -> bool:
     selectors = [
-        "#onetrust-accept-btn-handler",
-        "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll",
-        "button:has-text('Accept all')",
-        "button:has-text('Accept All')",
-        "button:has-text('Accept')",
-        "button:has-text('Agree')",
-        "button:has-text('Allow all')",
-        "[aria-label*='accept']",
+        f"button:has-text('{banner.text}')",
+        f"[role='button']:has-text('{banner.text}')",
+        f"[aria-label*='{banner.text}']",
     ]
 
     for selector in selectors:
@@ -74,52 +76,16 @@ def accept_cookies(page: Page, timeout: int = 5000) -> bool:
                 pass
 
     try:
-        page.evaluate("""
-        () => {
-            const btn = [...document.querySelectorAll("button")]
-              .find(b => /accept|agree|allow/i.test(b.innerText));
-            if (btn) btn.click();
-        }
-        """)
-        return True
-    except:
-        return False
-
-
-# ----------------------------
-# AGE VERIFICATION
-# ----------------------------
-def accept_age_verification(page: Page, timeout: int = 5000) -> bool:
-    selectors = [
-        "button:has-text('I am 18 years of age or older')",
-        "button:has-text('I am over 18')",
-        "button:has-text('Yes, I am over 18')",
-        "button:has-text('18')",
-    ]
-
-    for selector in selectors:
-        try:
-            page.locator(selector).first.click(timeout=timeout)
-            return True
-        except:
-            pass
-
-    for frame in page.frames:
-        for selector in selectors:
-            try:
-                frame.locator(selector).first.click(timeout=2000)
-                return True
-            except:
-                pass
-
-    try:
-        page.evaluate("""
-        () => {
-            const btn = [...document.querySelectorAll("button")]
-              .find(b => /18.*older|over.*18/i.test(b.innerText));
-            if (btn) btn.click();
-        }
-        """)
+        page.evaluate(
+            """
+            (text) => {
+                const btn = [...document.querySelectorAll("button")]
+                  .find(b => b.innerText.toLowerCase().includes(text.toLowerCase()));
+                if (btn) btn.click();
+            }
+            """,
+            banner.text
+        )
         return True
     except:
         return False
@@ -128,36 +94,35 @@ def accept_age_verification(page: Page, timeout: int = 5000) -> bool:
 # ----------------------------
 # PAGE LOAD PIPELINE
 # ----------------------------
-def prepare_page(page: Page, url: str):
+def prepare_page(page: Page, url: str, banner_1, banner_2):
     page.goto(url, wait_until="domcontentloaded", timeout=60000)
     page.wait_for_selector("body", timeout=10000)
 
-    accept_cookies(page)
-    time.sleep(0.5)
+    if banner_1:
+        accept_banner(page, banner_1)
+        time.sleep(0.5)
 
-    accept_age_verification(page)
-    time.sleep(0.5)
+    if banner_2:
+        accept_banner(page, banner_2)
+        time.sleep(0.5)
 
 
 # ----------------------------
 # SCRAPER (SCREENSHOTS + CLEAN HTML)
 # ----------------------------
-def capture_screenshots_and_html(url: str) -> tuple[list[bytes], str]:
+def capture_screenshots_and_html(url: str, banner_1, banner_2):
     screenshots = []
-    cleaned_html = ""
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
 
-        # ---------- DESKTOP ----------
         desktop_context = browser.new_context(viewport=DESKTOP_VIEWPORT)
         desktop_page = desktop_context.new_page()
-        prepare_page(desktop_page, url)
+        prepare_page(desktop_page, url, banner_1, banner_2)
 
         screenshots.append(desktop_page.screenshot(full_page=True))
         raw_html = desktop_page.content()
 
-        # ---------- MOBILE ----------
         mobile_context = browser.new_context(
             viewport=MOBILE_VIEWPORT,
             is_mobile=True,
@@ -165,13 +130,13 @@ def capture_screenshots_and_html(url: str) -> tuple[list[bytes], str]:
             device_scale_factor=3
         )
         mobile_page = mobile_context.new_page()
-        prepare_page(mobile_page, url)
+        prepare_page(mobile_page, url, banner_1, banner_2)
 
         screenshots.append(mobile_page.screenshot(full_page=True))
 
         browser.close()
 
-    # ---------- HTML CLEANING ----------
+    # -------- HTML CLEANING --------
     soup = BeautifulSoup(raw_html, "html.parser")
     body = soup.body
 
@@ -180,10 +145,6 @@ def capture_screenshots_and_html(url: str) -> tuple[list[bytes], str]:
 
     for tag_name in NON_SEO_TAGS:
         for tag in body.find_all(tag_name):
-            tag.decompose()
-
-    for tag in body.find_all():
-        if not tag.get_text(strip=True) and not tag.find("img"):
             tag.decompose()
 
     cleaned_html = body.get_text(separator="\n", strip=True)
@@ -199,8 +160,9 @@ async def ask_gemini(body: AskRequest):
     try:
         screenshots, cleaned_html = await asyncio.to_thread(
             capture_screenshots_and_html,
-            str(body.url)
-        )
+            str(body.url),
+            body.banner_1,
+            body.banner_2,
 
         filenames = [
             ROOT_DIR / "screenshot_desktop.png",
@@ -211,15 +173,13 @@ async def ask_gemini(body: AskRequest):
 
         for img_bytes, path in zip(screenshots, filenames):
             path.write_bytes(img_bytes)
-
             image_parts.append(
-                genai.types.Part.from_bytes(
-                    data=img_bytes,
-                    mime_type="image/png"
-                )
-            )
-        print(cleaned_html)
-        exit()
+                genai.types.Part.from_bytes(img_bytes, mime_type="image/png")
+            )  
+        
+        
+
+       
         response = await client.aio.models.generate_content(
             model="gemini-2.0-flash",
             contents=[
