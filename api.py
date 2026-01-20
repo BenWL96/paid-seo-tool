@@ -230,6 +230,38 @@ def extract_tagged_text(html: str) -> str:
     return html_no_whitespace
 
 
+# Includes all schema
+# def extract_tagged_text(html):
+#     soup = BeautifulSoup(html, "html.parser")
+#     body = soup.body
+
+#     if not body:
+#         return ""
+
+#     # 1️⃣ Remove non-structured scripts ONLY
+#     for script in body.find_all("script"):
+#         script_type = (script.get("type") or "").lower()
+
+#         if script_type not in (
+#             "application/ld+json",
+#             "application/json",
+#         ):
+#             script.decompose()
+
+#     # 2️⃣ Remove all other unwanted tags
+#     for bad in body.find_all(REMOVE_TAGS):
+#         bad.decompose()
+
+#     # 3️⃣ Optional: strip attributes
+#     cleaned_html = strip_class_and_id(body)
+
+#     print(cleaned_html)
+#     exit()
+
+#     # 4️⃣ Normalize whitespace
+#     html_no_whitespace = remove_html_whitespace(cleaned_html)
+#     return html_no_whitespace
+
 
 
 
@@ -377,7 +409,6 @@ def capture_screenshots_and_html(url: str, banner_1, banner_2):
         browser.close()
 
     cleaned_html = extract_tagged_text(raw_html)
-    print(cleaned_html)
 
 
     return screenshots, cleaned_html
@@ -401,24 +432,26 @@ async def ask_gemini(body: AskRequest):
         image_parts = []
 
         # Save in project root (or change this path if you want)
-        output_dir = Path(".").resolve()
+        # output_dir = Path(".").resolve()
 
-        filenames = [
-            output_dir / "screenshot_desktop.png",
-            output_dir / "screenshot_mobile.png",
-        ]
+        # filenames = [
+        #     output_dir / "screenshot_desktop.png",
+        #     output_dir / "screenshot_mobile.png",
+        # ]
 
-        for img_bytes, path in zip(screenshots, filenames):
-            # ✅ Save image to disk
-            path.write_bytes(img_bytes)
+        # for img_bytes, path in zip(screenshots, filenames):
+        #     # ✅ Save image to disk
+        #     path.write_bytes(img_bytes)
 
-            # ✅ Pass image to Gemini
-            image_parts.append(
-                genai.types.Part.from_bytes(
-                    data=img_bytes,
-                    mime_type="image/png"
-                )
-            )
+        #     # ✅ Pass image to Gemini
+        #     image_parts.append(
+        #         genai.types.Part.from_bytes(
+        #             data=img_bytes,
+        #             mime_type="image/png"
+        #         )
+        #     )
+
+        for img_bytes in screenshots: image_parts.append( genai.types.Part.from_bytes( data=img_bytes, mime_type="image/png" ) )
 
         response = await client.aio.models.generate_content(
             model="gemini-3-flash-preview",
