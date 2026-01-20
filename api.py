@@ -163,7 +163,7 @@ async def ask_gemini(body: AskRequest):
             str(body.url),
             body.banner_1,
             body.banner_2,
-
+        )
         filenames = [
             ROOT_DIR / "screenshot_desktop.png",
             ROOT_DIR / "screenshot_mobile.png",
@@ -174,12 +174,15 @@ async def ask_gemini(body: AskRequest):
         for img_bytes, path in zip(screenshots, filenames):
             path.write_bytes(img_bytes)
             image_parts.append(
-                genai.types.Part.from_bytes(img_bytes, mime_type="image/png")
+                genai.types.Part.from_bytes(
+                    data=img_bytes,
+                    mime_type="image/png"
+                )
             )  
-        
-        
 
-       
+        print(cleaned_html)
+        exit()
+
         response = await client.aio.models.generate_content(
             model="gemini-2.0-flash",
             contents=[
