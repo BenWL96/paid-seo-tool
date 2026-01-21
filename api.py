@@ -252,13 +252,15 @@ def extract_tagged_text(html: str) -> str:
     # ----------------------------
     for script in body.find_all("script"):
         script_type = (script.get("type") or "").lower()
-        if script_type not in ("application/ld+json", "application/json"):
+        if script_type not in ("application/ld+json"):
             script.decompose()
 
     for bad in body.find_all(REMOVE_TAGS_LIGHT):
         bad.decompose()
 
     body_html_with_structure_data = strip_class_and_id(body)
+
+    
     html_no_whitespace = remove_html_whitespace(head_html_with_structure_data) + remove_html_whitespace(body_html_with_structure_data)
    
 
@@ -531,32 +533,35 @@ async def ask_gemini(body: AskRequest):
             # Gemini call can safely run concurrently
             # Split up mobile and desktop analysis
             # Model should be able to identify page intent from HTML alone..
-            # desktop_response = await client.aio.models.generate_content(
-            #     model="gemini-3-flash-preview",
-            #     contents=[
-            #         "Analyze the following HTML and screenshots. "
-            #         "Describe how the page could be improved for UX, SEO, and conversion on DESKTOP DISPLAY ONLY.",
-            #         f"HTML CONTENT:\n{cleaned_html}",
-            #         *image_parts
-            #     ],
-            #     config=genai.types.GenerateContentConfig(
-            #         tools=[search_tool]
-            #     )
-            # )
 
-            # # Gemini call can safely run concurrently
-            # mobile_response = await client.aio.models.generate_content(
-            #     model="gemini-3-flash-preview",
-            #     contents=[
-            #         "Analyze the following page HTML and screenshots. "
-            #         "Describe how the page could be improved for UX, SEO, and conversion on MOBILE DISPLAY ONLY.",
-            #         f"HTML CONTENT:\n{cleaned_html}",
-            #         *image_parts
-            #     ],
-            #     config=genai.types.GenerateContentConfig(
-            #         tools=[search_tool]
-            #     )
-            # )
+            print(len(cleaned_html))
+            exit()
+            desktop_response = await client.aio.models.generate_content(
+                model="gemini-3-flash-preview",
+                contents=[
+                    "Analyze the following HTML and screenshots. "
+                    "Describe how the page could be improved for UX, SEO, and conversion on DESKTOP DISPLAY ONLY.",
+                    f"HTML CONTENT:\n{cleaned_html}",
+                    *image_parts
+                ],
+                config=genai.types.GenerateContentConfig(
+                    tools=[search_tool]
+                )
+            )
+
+            # Gemini call can safely run concurrently
+            mobile_response = await client.aio.models.generate_content(
+                model="gemini-3-flash-preview",
+                contents=[
+                    "Analyze the following page HTML and screenshots. "
+                    "Describe how the page could be improved for UX, SEO, and conversion on MOBILE DISPLAY ONLY.",
+                    f"HTML CONTENT:\n{cleaned_html}",
+                    *image_parts
+                ],
+                config=genai.types.GenerateContentConfig(
+                    tools=[search_tool]
+                )
+            )
 
             # Gemini call can safely run concurrently
             aeo_response = await client.aio.models.generate_content(
@@ -572,9 +577,6 @@ async def ask_gemini(body: AskRequest):
                 )
             )
 
-            print(aeo_response)
-            exit()
-
             geo_response = await client.aio.models.generate_content(
                 model="gemini-3-flash-preview",
                 contents=[
@@ -587,6 +589,7 @@ async def ask_gemini(body: AskRequest):
                     tools=[search_tool]
                 )
             )
+        
 
             return {
                 "desktop_response": desktop_response.text,
